@@ -1,0 +1,14 @@
+name: noop
+run-name: noop (${{ inputs.note }})
+on:
+  workflow_dispatch:
+    inputs:
+      note:
+        description: free text
+        required: false
+        default: ""
+jobs:
+  noop:
+    runs-on: ubuntu-latest
+    steps:
+      - run: echo "noop ${{ inputs.note }}"
