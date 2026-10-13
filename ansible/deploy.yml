@@ -3,7 +3,7 @@
 #
 # Extra vars:
 #   stage           dev | qa | sit | uat | prod
-#   artifact        OCI reference, e.g. ghcr.io/akuity/sedemo-monorepo-nav-service:1.2.3
+#   artifact        OCI reference, e.g. ghcr.io/akuity/sedemo-monorepo-vm-app:1.2.3
 #   app_version     version /version must report after the restart
 #   config_file     path to the rendered config.yaml (copied verbatim)
 #   expected_count  number of VMs the stage must have
