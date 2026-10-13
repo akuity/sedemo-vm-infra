@@ -62,6 +62,11 @@ abort promotions: abort them in the Kargo UI (Promotion → Abort), re-run.
    **Revert only after the rollback promotion (no actor) appears and dev is
    verified again (~3.5 min).** Reverting earlier creates newer Freight that dev
    auto-promotes before verification fails, so the auto-rollback never shows.
+   **After an auto-rollback, dev's auto-promotion stays paused until a human
+   promotes.** So after the revert, promote the new (fixed) Freight to dev
+   yourself (`kargo promote --project vm-demo --stage dev --freight-alias <fix>`);
+   qa then auto-follows. Say it out loud: Kargo won't roll forward on its own
+   after a rollback; a person decides the fix is ready.
    Rehearsal: push 06:05:03, verification Failed ~06:08, rollback promotion 06:08:29.
 3. **Same artifact everywhere.** Compare `rendered/vm-demo/dev` with `/qa`
    (both on the same Freight in the starting state): `rollouts-demo.env` differs
