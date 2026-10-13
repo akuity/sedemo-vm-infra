@@ -1,0 +1,26 @@
+name: runner-probe
+run-name: runner probe
+on:
+  workflow_dispatch: {}
+jobs:
+  probe:
+    runs-on: homelab-vm-demo
+    steps:
+      - name: Tools on the stock runner image
+        run: |
+          for t in bash curl jq git python3 pip3 tar unzip sudo; do
+            printf '%-8s ' "$t"; command -v "$t" || echo MISSING
+          done
+          cat /etc/os-release | head -2
+      - name: Reach Proxmox API and the LAN
+        run: |
+          curl -sk -o /dev/null -w 'pve01 api: %{http_code}\n' https://pve01.annarchy.net:8006/api2/json/version
+          getent hosts pve01.annarchy.net || echo "no DNS for pve01"
+          timeout 3 bash -c '</dev/tcp/pve01.annarchy.net/22' && echo "pve01 ssh: open" || echo "pve01 ssh: closed"
+      - name: Kubernetes API for Terraform state
+        run: |
+          ls /var/run/secrets/kubernetes.io/serviceaccount/ && echo "SA token mounted"
+          curl -s -o /dev/null -w 'k8s secrets list: %{http_code}\n' \
+            --cacert /var/run/secrets/kubernetes.io/serviceaccount/ca.crt \
+            -H "Authorization: Bearer $(cat /var/run/secrets/kubernetes.io/serviceaccount/token)" \
+            "https://kubernetes.default.svc/api/v1/namespaces/arc-runners/secrets?limit=1"
