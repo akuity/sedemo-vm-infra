@@ -1,0 +1,173 @@
+---
+# Deploy rollouts-demo (the rollouts-app image, run natively) to one stage's VMs.
+#
+# converge.sh unpacks the image (FROM scratch: /rollouts-demo plus web assets)
+# with `crane export` into artifact_dir before running this playbook.
+#
+# Extra vars:
+#   stage           dev | qa | sit | uat | prod
+#   artifact        image reference, e.g. ghcr.io/akuity/sedemo-monorepo-rollouts-app:50-blue (for messages)
+#   app_version     image tag; GET /env must report it as .semver after the restart
+#   env_file        path to the rendered rollouts-demo.env (copied verbatim)
+#   expected_count  number of VMs the stage must have
+#   artifact_dir    unpacked image (default: <playbook_dir>/artifact)
+#   healthz_gate    true only for prod: also require 10 consecutive GET /color 200,
+#                   so a bad config halts the rolling deploy after the first VM
+#
+# When limiting to one VM, keep localhost in the limit: --limit 'vm-dev,localhost'.
+# The count check always uses the whole stage group, not the limited hosts.
+
+- name: Check the unpacked image and the stage inventory
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  vars:
+    stage_group: "tag_stage_{{ stage }}"
+    stage_hosts: "{{ groups[stage_group] | default([]) }}"
+    image_dir: "{{ artifact_dir | default(playbook_dir ~ '/artifact') }}"
+  tasks:
+    - name: Validate extra vars
+      ansible.builtin.assert:
+        that:
+          - stage in ['dev', 'qa', 'sit', 'uat', 'prod']
+          - artifact | default('') | length > 0
+          - app_version | default('') | string | length > 0
+          - env_file is defined and env_file is file
+          - expected_count | default(0) | int > 0
+        fail_msg: "stage, artifact, app_version, env_file (existing file) and expected_count are required"
+        quiet: true
+
+    - name: Assert the stage has the expected number of VMs
+      ansible.builtin.assert:
+        that:
+          - stage_hosts | length == expected_count | int
+        fail_msg: >-
+          Expected {{ expected_count }} VM(s) tagged stage-{{ stage }},
+          found {{ stage_hosts | length }}: {{ stage_hosts | join(', ') or 'none' }}
+        quiet: true
+
+    - name: Assert every VM has a guest-agent IPv4 address
+      ansible.builtin.assert:
+        that:
+          - hostvars[item]['ansible_host'] | default('') is match('^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$')
+        fail_msg: "{{ item }} has no guest-agent IPv4 yet (ansible_host={{ hostvars[item]['ansible_host'] | default('unset') }})"
+        quiet: true
+      loop: "{{ stage_hosts }}"
+
+    - name: Check the rollouts-demo binary was unpacked
+      ansible.builtin.stat:
+        path: "{{ image_dir }}/rollouts-demo"
+      register: binary
+
+    - name: Assert the rollouts-demo binary is present
+      ansible.builtin.assert:
+        that:
+          - binary.stat.exists
+        fail_msg: "{{ image_dir }} has no rollouts-demo binary; was {{ artifact }} unpacked?"
+        quiet: true
+
+    - name: Find web assets
+      ansible.builtin.find:
+        paths: "{{ image_dir }}"
+        patterns: ["*.html", "*.js", "*.png", "*.ico", "*.css"]
+      register: assets
+
+    - name: Assert the image has web assets
+      ansible.builtin.assert:
+        that:
+          - assets.files | selectattr('path', 'search', '/index\.html$') | list | length == 1
+        fail_msg: "{{ image_dir }} has no index.html"
+        quiet: true
+
+- name: Deploy rollouts-demo
+  hosts: "tag_stage_{{ stage | default('none') }}"
+  serial: 1
+  any_errors_fatal: true
+  become: true
+  gather_facts: false
+  vars:
+    image_dir: "{{ artifact_dir | default(playbook_dir ~ '/artifact') }}"
+    asset_files: "{{ hostvars['localhost']['assets']['files'] | map(attribute='path') | list }}"
+    healthz_gate: false
+  tasks:
+    - name: Wait for SSH (new VMs may still be booting)
+      ansible.builtin.wait_for_connection:
+        timeout: "{{ wait_for_connection_timeout | default(300) }}"
+
+    - name: Ensure service user
+      ansible.builtin.user:
+        name: rollouts
+        system: true
+        create_home: false
+        home: /nonexistent
+        shell: /usr/sbin/nologin
+
+    - name: Ensure directories
+      ansible.builtin.file:
+        path: "{{ item.path }}"
+        state: directory
+        owner: root
+        group: "{{ item.group }}"
+        mode: "{{ item.mode }}"
+      loop:
+        - { path: /opt/rollouts-demo, group: root, mode: "0755" }
+        - { path: /etc/rollouts-demo, group: rollouts, mode: "0750" }
+
+    - name: Install binary
+      ansible.builtin.copy:
+        src: "{{ image_dir }}/rollouts-demo"
+        dest: /opt/rollouts-demo/rollouts-demo
+        owner: root
+        group: root
+        mode: "0755"
+
+    - name: Install web assets
+      ansible.builtin.copy:
+        src: "{{ item }}"
+        dest: /opt/rollouts-demo/
+        owner: root
+        group: root
+        mode: "0644"
+      loop: "{{ asset_files }}"
+
+    - name: Install systemd unit
+      ansible.builtin.copy:
+        src: files/rollouts-demo.service
+        dest: /etc/systemd/system/rollouts-demo.service
+        owner: root
+        group: root
+        mode: "0644"
+
+    - name: Install rendered env file
+      ansible.builtin.copy:
+        src: "{{ env_file }}"
+        dest: /etc/rollouts-demo/rollouts-demo.env
+        owner: root
+        group: rollouts
+        mode: "0640"
+
+    # Always restart: re-promoting identical Freight must still converge.
+    - name: Restart rollouts-demo
+      ansible.builtin.systemd_service:
+        name: rollouts-demo
+        daemon_reload: true
+        enabled: true
+        state: restarted
+
+    - name: Wait for /env to report semver {{ app_version }}
+      ansible.builtin.uri:
+        url: http://127.0.0.1:8080/env
+        return_content: true
+      register: env
+      until: env.json is defined and (env.json.semver | default('') | string) == (app_version | string)
+      retries: 20
+      delay: 3
+
+    - name: Require 10 consecutive GET /color 200 before the next VM
+      ansible.builtin.uri:
+        url: http://127.0.0.1:8080/color
+        status_code: 200
+      loop: "{{ range(10) | list }}"
+      loop_control:
+        label: "/color #{{ item + 1 }}"
+      when: healthz_gate | bool

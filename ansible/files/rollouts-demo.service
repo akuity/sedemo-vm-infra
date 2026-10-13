@@ -1,0 +1,41 @@
+[Unit]
+Description=rollouts-demo (vm-demo)
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=simple
+User=rollouts
+Group=rollouts
+WorkingDirectory=/opt/rollouts-demo
+EnvironmentFile=/etc/rollouts-demo/rollouts-demo.env
+ExecStart=/opt/rollouts-demo/rollouts-demo --listen-addr :8080 --termination-delay 1
+Restart=on-failure
+RestartSec=2
+
+# Hardening
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+PrivateDevices=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectKernelLogs=true
+ProtectControlGroups=true
+ProtectClock=true
+ProtectHostname=true
+RestrictNamespaces=true
+RestrictRealtime=true
+RestrictSUIDSGID=true
+LockPersonality=true
+MemoryDenyWriteExecute=true
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+CapabilityBoundingSet=
+AmbientCapabilities=
+SystemCallArchitectures=native
+SystemCallFilter=@system-service
+UMask=0077
+
+[Install]
+WantedBy=multi-user.target

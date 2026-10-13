@@ -1,0 +1,5 @@
+---
+collections:
+  # The Proxmox inventory plugin moved from community.general to community.proxmox.
+  - name: community.proxmox
+    version: "2.1.0"

@@ -2,3 +2,5 @@
 .worktrees/
 .terraform/
 *.tfstate*
+ansible/artifact/
+.ansible/
