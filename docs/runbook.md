@@ -58,11 +58,15 @@ abort promotions: abort them in the Kargo UI (Promotion → Abort), re-run.
    Edit `vm-app/config-chart/values.yaml` on `main`: `latency: 0` → `latency: 10`
    ("someone shipped a bad config"). New Freight → dev auto-promotes → `vm-health`
    fails (every `/color` request times out) → Kargo re-promotes the last good
-   Freight with no human actor. qa never sees it. **Revert the commit right after.**
+   Freight with no human actor. qa never sees it.
+   **Revert only after the rollback promotion (no actor) appears and dev is
+   verified again (~3.5 min).** Reverting earlier creates newer Freight that dev
+   auto-promotes before verification fails, so the auto-rollback never shows.
    Rehearsal: push 06:05:03, verification Failed ~06:08, rollback promotion 06:08:29.
-3. **Same artifact everywhere.** Open `rendered/vm-demo/qa` and `/sit`: the
-   rendered `rollouts-demo.env` differs only in `STAGE`/`NAMESPACE`; the
-   Freight pins the image and the chart commit.
+3. **Same artifact everywhere.** Compare `rendered/vm-demo/dev` with `/qa`
+   (both on the same Freight in the starting state): `rollouts-demo.env` differs
+   only in `STAGE`/`NAMESPACE`, and `deploy.yaml` only in `stage`. The Freight
+   pins the image and the chart commit, so what QA tested is what moves on.
 4. **Release `50-blue` to sit (CLI, ~2 min):**
    `kargo promote --project vm-demo --stage sit --freight-alias <blue alias>`
 5. **uat with the SysOps PR (~3 min):** promote in the UI; open the PR Kargo

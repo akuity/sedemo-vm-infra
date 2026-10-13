@@ -23,6 +23,8 @@ check_main_branches() {
   values="$(gh api "repos/${MONOREPO}/contents/vm-app/config-chart/values.yaml" -q .content | base64 -d)"
   grep -Eq '^errorRate:[[:space:]]*0[[:space:]]*(#.*)?$' <<<"$values" \
     || die "${MONOREPO} vm-app/config-chart/values.yaml errorRate is not 0 (auto-rollback rehearsal not reverted?)"
+  grep -Eq '^latency:[[:space:]]*0[[:space:]]*(#.*)?$' <<<"$values" \
+    || die "${MONOREPO} vm-app/config-chart/values.yaml latency is not 0 (auto-rollback rehearsal not reverted?)"
   sit="$(gh api "repos/${PLATFORM_REPO}/contents/apps/vm-demo/env/sit/values.yaml" -q .content | base64 -d)"
   grep -Eq '^namespace:' <<<"$sit" \
     || die "${PLATFORM_REPO} apps/vm-demo/env/sit/values.yaml has no namespace (render-failure rehearsal not reverted?)"

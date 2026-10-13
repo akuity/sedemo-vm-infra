@@ -167,6 +167,9 @@
       ansible.builtin.uri:
         url: http://127.0.0.1:8080/color
         status_code: 200
+        # Same 5s budget as Kargo's vm-health check, so a slow-but-200 bad
+        # config (e.g. LATENCY=10) halts the rollout after vm-prod-1.
+        timeout: 5
       loop: "{{ range(10) | list }}"
       loop_control:
         label: "/color #{{ item + 1 }}"
