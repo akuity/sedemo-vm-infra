@@ -82,8 +82,13 @@ Prospect pains this answers:
 - `images/base.json`: `{ "template": "...", "vmid": N, "built": "...", "packer_commit": "..." }`,
   committed by the bake workflow; watched by the `base-image` Warehouse.
 - `terraform/stage-vms/`: module + root config keyed by stage; VMs cloned
-  from the template in the stage's `deploy.yaml`; static IPs via cloud-init;
-  Kubernetes backend (`secret_suffix = <stage>`).
+  from the template in the stage's `deploy.yaml`; DHCP addressing with a
+  fixed MAC per VM (replacements usually keep their lease) and Proxmox tags
+  `vm-demo` + `stage-<stage>`; guest agent enabled and awaited before
+  reporting an IP; Kubernetes backend (`secret_suffix = <stage>`).
+- `ansible/inventory/proxmox.yml`: `community.general.proxmox` dynamic
+  inventory, groups from Proxmox tags, `ansible_host` from guest-agent IPs.
+  No IP addresses are stored anywhere in git.
 - `ansible/deploy.yml`: `serial: 1`; `oras pull` the pinned artifact,
   install binary and unit, copy rendered `config.yaml`, restart, wait for
   `/healthz` and matching `/version`.
@@ -95,14 +100,17 @@ Prospect pains this answers:
   stage (prod: per-VM `-target`, then deploy that VM, then next), Ansible
   deploy. Idempotent: an app promotion is a Terraform no-op; a base-image
   promotion replaces VMs and redeploys the stage's current app version.
-- Secrets (repo Actions secrets): Proxmox API token, Ansible SSH private key,
+- Secrets (repo Actions secrets): Proxmox API token (Packer/Terraform/inventory), Ansible SSH private key,
   ghcr read token. None of these live in Kargo or the public repos.
 - `docs/`: this spec, implementation plan, demo runbook, reset script.
 
 **`akuity/sedemo-platform` (public), `apps/vm-demo/`**
 
 - `kargo/`: Project + ProjectConfig, two Warehouses, five Stages, PromotionTask
-  `vm-promote`, AnalysisTemplate(s), credentials references.
+  `vm-promote`, AnalysisTemplate(s), credentials references. The verification
+  job's read-only Proxmox token is referenced by Secret name only; the Secret
+  itself is created out-of-band (or sealed in fleet-infra), never committed
+  here.
 - `env/<stage>/values.yaml`: env-specific config values (platform-owned).
 - `env/<stage>/rendered/{config.yaml,deploy.yaml}`: written only by Kargo.
 - Argo CD Application/ApplicationSet that syncs `kargo/` to the Kargo
@@ -121,8 +129,10 @@ Prospect pains this answers:
 ### VMs
 
 `vm-dev`, `vm-qa`, `vm-sit`, `vm-uat`, `vm-prod-1`, `vm-prod-2`, plus a
-transient Packer build VM. Static IPs on 10.0.0.0/24 (to be allocated), node
-`pve01`, storage `images` unless told otherwise.
+transient Packer build VM. All addresses come from the homelab DHCP server,
+which does not register hostnames in DNS, so every consumer discovers IPs
+through the Proxmox API (guest agent) by tag. Node `pve01`, storage `images`
+unless told otherwise.
 
 ## Kargo pipeline
 
@@ -147,7 +157,11 @@ Every Stage requests Freight from both origins.
 | prod | uat | manual | `snow-create` CR → `snow-wait-for-condition` (Implement) → PR + wait → deploy → `snow-update` close | same, both VMs |
 
 All Stages set `shard: homelab`. Verification runs as AnalysisTemplate jobs on
-the homelab agent's cluster, which can reach the VMs directly.
+the homelab agent's cluster, which can reach the VMs directly. The job script
+(curl + jq) queries the Proxmox API with a read-only token for VMs tagged
+`stage-<stage>`, reads each VM's guest-agent IPv4, then checks `/healthz`
+(200) and `/version` (`version` equals the promoted app version). It fails if
+the expected VM count is not found.
 
 ### PromotionTask `vm-promote`
 
@@ -187,7 +201,9 @@ the homelab agent's cluster, which can reach the VMs directly.
 | S4 | Kargo gha steps can dispatch in a private repo | dispatch a no-op workflow | broader-scope token |
 
 Known gotchas designed around: Ubuntu cloud image lacks `qemu-guest-agent`
-(seed installs it; static IPs anyway); confirm `bpg/proxmox` replaces on
+(seed installs it; every IP lookup depends on it, so Terraform and the
+inventory wait for the agent); DHCP leases can change on VM replacement
+(fixed MACs make it unlikely, and nothing depends on a stable IP); confirm `bpg/proxmox` replaces on
 `clone` source change, else `converge.yml` uses `-replace=`; Kubernetes
 backend RBAC; pod network reachability to Proxmox API and VM IPs;
 `kyverno-policy-check` is not used (it performs no policy check).
@@ -222,6 +238,7 @@ Azure.
 
 ## Open inputs from presenter
 
-- Seven static IPs in 10.0.0.0/24; confirm node `pve01` / storage `images`.
-- Proxmox token for Packer/Terraform: reuse existing `packer-api-token` in
-  `pass` or create a dedicated `vm-demo` token.
+- Confirm node `pve01` / storage `images`.
+- Proxmox token for Packer/Terraform/inventory: reuse existing
+  `packer-api-token` in `pass` or create a dedicated `vm-demo` token.
+- A read-only Proxmox token (`PVEAuditor`) for Kargo verification.
