@@ -1,6 +1,6 @@
 {
-  "template": "ubuntu-2404-base-202610130408",
-  "vmid": 9103,
-  "built": "2026-10-13T04:08:23Z",
-  "packer_commit": "0826f17f66240955be0d4a907b78e0bf03c82dbc"
+  "template": "ubuntu-2404-base-202610130612",
+  "vmid": 9104,
+  "built": "2026-10-13T06:12:31Z",
+  "packer_commit": "6737e15803296a390e1817ab898eb79710f93084"
 }
