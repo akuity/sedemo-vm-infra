@@ -4,3 +4,4 @@
 *.tfstate*
 ansible/artifact/
 .ansible/
+packer/ubuntu-2404/packages.txt

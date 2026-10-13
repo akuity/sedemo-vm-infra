@@ -65,4 +65,17 @@ build {
     environment_vars = ["BUILD_TIMESTAMP=${local.build_timestamp}"]
     execute_command  = "chmod +x {{ .Path }}; sudo env {{ .Vars }} {{ .Path }}"
   }
+
+  # Package manifest for this image ("<package> <version>", sorted). The bake
+  # workflow commits it as images/packages.txt so Kargo can diff the OS
+  # contents of two base images for the release ticket.
+  provisioner "shell" {
+    inline = ["dpkg-query -W -f='$${Package} $${Version}\\n' | LC_ALL=C sort > /tmp/packages.txt"]
+  }
+
+  provisioner "file" {
+    direction   = "download"
+    source      = "/tmp/packages.txt"
+    destination = "${path.root}/packages.txt"
+  }
 }

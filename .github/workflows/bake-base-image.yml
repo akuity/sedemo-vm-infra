@@ -103,12 +103,14 @@ jobs:
             '{template: $template, vmid: $vmid, built: $built, packer_commit: $packer_commit}' \
             > images/base.json
           cat images/base.json
+          cp packer/ubuntu-2404/packages.txt images/packages.txt
+          echo "$(wc -l < images/packages.txt) packages recorded in images/packages.txt"
 
       - name: Commit and push
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add images/base.json
+          git add images/base.json images/packages.txt
           git commit -m "chore(images): bake ${TEMPLATE_NAME}"
           git pull --rebase origin main
           git push origin HEAD:main
