@@ -33,6 +33,8 @@ env:
   CRANE_VERSION: v0.22.1
   CRANE_SHA256: 0ab7a1d6932a213aed964ce97666c3077fe691c8606413674a8b3e0b9ec4cda0
   ANSIBLE_CORE_VERSION: "2.21.4"
+  TOOLS_DIR: /home/runner/.cache/vm-demo
+  ANSIBLE_COLLECTIONS_PATH: /home/runner/.cache/vm-demo/collections
 
 jobs:
   converge:
@@ -70,30 +72,43 @@ jobs:
           terraform_version: "1.16.4"
           terraform_wrapper: false
 
+      # Runner pods are ephemeral, so cache the tool installs (crane, yq, the
+      # Ansible venv and collections) instead of rebuilding them every run.
+      - name: Restore tool cache
+        id: tools
+        uses: actions/cache@v4
+        with:
+          path: ${{ env.TOOLS_DIR }}
+          key: vm-demo-tools-${{ runner.os }}-${{ env.CRANE_VERSION }}-${{ env.YQ_VERSION }}-${{ env.ANSIBLE_CORE_VERSION }}-${{ hashFiles('ansible/requirements.yml') }}
+
       - name: Install crane, yq and Ansible
+        if: steps.tools.outputs.cache-hit != 'true'
         run: |
-          mkdir -p "$RUNNER_TEMP/bin"
+          mkdir -p "$TOOLS_DIR/bin"
           curl -fsSL -o "$RUNNER_TEMP/crane.tar.gz" \
             "https://github.com/google/go-containerregistry/releases/download/${CRANE_VERSION}/go-containerregistry_Linux_x86_64.tar.gz"
           echo "${CRANE_SHA256}  $RUNNER_TEMP/crane.tar.gz" | sha256sum -c -
-          tar -xzf "$RUNNER_TEMP/crane.tar.gz" -C "$RUNNER_TEMP/bin" crane
-          curl -fsSL -o "$RUNNER_TEMP/bin/yq" \
+          tar -xzf "$RUNNER_TEMP/crane.tar.gz" -C "$TOOLS_DIR/bin" crane
+          curl -fsSL -o "$TOOLS_DIR/bin/yq" \
             "https://github.com/mikefarah/yq/releases/download/${YQ_VERSION}/yq_linux_amd64"
-          chmod +x "$RUNNER_TEMP/bin/yq"
-          echo "$RUNNER_TEMP/bin" >> "$GITHUB_PATH"
-          # The stock runner image has python3 but no pip/venv or ssh client, and
-          # Ubuntu 24.04 blocks --user pip installs (PEP 668): use a venv.
-          if ! command -v ansible-playbook >/dev/null; then
-            sudo apt-get update -qq
-            sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -qq python3-venv openssh-client >/dev/null
-            python3 -m venv "$RUNNER_TEMP/ansible-venv"
-            "$RUNNER_TEMP/ansible-venv/bin/pip" install -q "ansible-core==${ANSIBLE_CORE_VERSION}" requests
-            echo "$RUNNER_TEMP/ansible-venv/bin" >> "$GITHUB_PATH"
-          fi
+          chmod +x "$TOOLS_DIR/bin/yq"
+          # The stock runner image has python3 but no pip/venv, and Ubuntu 24.04
+          # blocks --user pip installs (PEP 668): use a venv.
+          sudo apt-get update -qq
+          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -qq python3-venv >/dev/null
+          python3 -m venv "$TOOLS_DIR/ansible-venv"
+          "$TOOLS_DIR/ansible-venv/bin/pip" install -q "ansible-core==${ANSIBLE_CORE_VERSION}" requests
+          "$TOOLS_DIR/ansible-venv/bin/ansible-galaxy" collection install \
+            -r ansible/requirements.yml -p "$ANSIBLE_COLLECTIONS_PATH"
 
-      - name: Install Ansible collections
-        working-directory: ansible
-        run: ansible-galaxy collection install -r requirements.yml
+      - name: Put tools on PATH
+        run: |
+          echo "$TOOLS_DIR/bin" >> "$GITHUB_PATH"
+          echo "$TOOLS_DIR/ansible-venv/bin" >> "$GITHUB_PATH"
+          if ! command -v ssh >/dev/null; then
+            sudo apt-get update -qq
+            sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -qq openssh-client >/dev/null
+          fi
 
       - name: Credentials
         env:
