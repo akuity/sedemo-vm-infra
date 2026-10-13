@@ -3,7 +3,7 @@ resource "proxmox_download_file" "noble" {
   datastore_id = var.iso_storage
   node_name    = var.node_name
   url          = var.image_url
-  file_name    = "noble-server-cloudimg-amd64.img"
+  file_name    = "vm-demo-noble-server-cloudimg-amd64.img"
 }
 
 resource "proxmox_virtual_environment_file" "user_data" {
