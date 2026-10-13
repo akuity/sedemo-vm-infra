@@ -13,6 +13,9 @@ cloud-init status --wait || true
 apt-get "${APT_OPTS[@]}" update
 apt-get "${APT_OPTS[@]}" full-upgrade
 apt-get "${APT_OPTS[@]}" install curl jq ca-certificates qemu-guest-agent
+# Security baseline: kernel audit logging (auditd) on every host.
+apt-get "${APT_OPTS[@]}" install auditd
+systemctl enable auditd
 systemctl enable qemu-guest-agent
 
 # The app's service user and directories are created by Ansible at deploy time.
