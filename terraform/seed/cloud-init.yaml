@@ -1,0 +1,16 @@
+#cloud-config
+# Rendered by Terraform (templatefile). Runs in every clone of the seed:
+# the Packer build VM and, via the baked templates, every stage VM.
+users:
+  - name: ubuntu
+    groups: [sudo]
+    shell: /bin/bash
+    sudo: "ALL=(ALL) NOPASSWD:ALL"
+    lock_passwd: true
+    ssh_authorized_keys:
+      - ${ssh_public_key}
+package_update: true
+packages:
+  - qemu-guest-agent
+runcmd:
+  - systemctl enable --now qemu-guest-agent
