@@ -79,6 +79,15 @@ abort promotions: abort them in the Kargo UI (Promotion → Abort), re-run.
 6. **prod (~3.5 min):** promote; Kargo opens the PR *and* a CHANGE issue.
    Move the issue to **Approved**, merge the PR; converge rolls vm-prod-1 then
    vm-prod-2; Kargo comments the result on the issue. Show the app turning blue.
+   **Show the change ticket as the release manager sees it:** the CHANGE issue
+   is a release summary of what prod runs now vs. what's coming: Application
+   (tag change, rollouts-app commits, compare link), Configuration (chart
+   commits, compare link, the rendered-config PR), Base image (template change
+   and the OS package diff, e.g. `+ auditd`, `~ openssl a -> b`).
+   **Then show the audit trail:** Kargo project → Events (or Akuity org audit
+   log, actions `custom-*`): promotion-requested (who promoted), change-approved
+   (`jira:<approver>`), pr-merged (`github:<login>`), deployed (with the
+   converge run link) — every human input, attributed, per promotion.
 7. **Rollback prod (~3.5 min):** `kargo promote --project vm-demo --stage prod --freight-alias <green alias>`:
    same PR + CHANGE gates; bubbles go back to green. "Rollback is just another
    audited promotion."
@@ -92,6 +101,13 @@ Not shown live (tested): a missing per-stage value (delete `namespace` from
 `namespace is required`, before any VM is touched.
 
 ## Gotchas found in rehearsal
+
+- **One promotion moves one Freight.** A ticket shows the app *or* the base
+  image changing; the other section reads "(unchanged)" / "no package changes".
+  For a package diff on stage, promote a new base image (`bake-base-image.yml`,
+  ~5 min) to prod; images baked before 2026-10-13 16:09 UTC have no manifest.
+- **Hand-assembled Freight has no source revision** (e.g. `steady-green`), so
+  its app section reads "(unknown revision)". Warehouse Freight is exact.
 
 - **Do not use `errorRate` for the bad-config story.** `rollouts-app` inverts
   `ERROR_RATE` (500 when `rand(100) >= ERROR_RATE`): 100 never errors, 1 errors
