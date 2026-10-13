@@ -17,6 +17,8 @@ source "proxmox-clone" "ubuntu" {
   token                    = var.proxmox_token_secret
   node                     = var.proxmox_node
   insecure_skip_tls_verify = true
+  # A full clone of the 10G seed onto NFS takes ~90s; the 1m default times out.
+  task_timeout             = "10m"
 
   clone_vm_id = var.clone_vm_id
   full_clone  = true
