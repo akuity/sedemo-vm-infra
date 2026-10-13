@@ -67,7 +67,7 @@ Prospect pains this answers:
 - `config-chart/`: Helm chart whose only template renders `config.yaml`.
   Shared defaults in `values.yaml`; per-env keys use `required`.
 - `.github/workflows/publish-vm-app.yml`: on push to `vm-app/app/**`, build a
-  static linux/amd64 binary, `oras push ghcr.io/akuity/sedemo-monorepo-nav-service:<semver>`
+  static linux/amd64 binary, `oras push ghcr.io/akuity/sedemo-monorepo-vm-app:<semver>`
   a tarball containing the binary and systemd unit. Version from a `VERSION`
   file.
 
@@ -139,7 +139,7 @@ unless told otherwise.
 ### Warehouses
 
 - `nav-service`: `image` subscription on
-  `ghcr.io/akuity/sedemo-monorepo-nav-service` (SemVer) and `git`
+  `ghcr.io/akuity/sedemo-monorepo-vm-app` (SemVer) and `git`
   subscription on `sedemo-monorepo`, `includePaths: [vm-app/config-chart]`.
 - `base-image`: `git` subscription on `sedemo-vm-infra`,
   `includePaths: [images]`.
