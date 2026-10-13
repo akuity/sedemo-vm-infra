@@ -50,7 +50,7 @@ Prospect pains this answers:
 | VM lifecycle | Terraform `bpg/proxmox`, state in Kubernetes Secret backend |
 | App deploy | Ansible from GitHub Actions on a self-hosted ARC runner |
 | Runner repo | New private repo `akuity/sedemo-vm-infra` (public repos must not host self-hosted runners) |
-| Kargo execution | Self-hosted Kargo agent in homelab cluster, shard `homelab` |
+| Kargo execution | Self-hosted Kargo agent in homelab cluster, shard `team-ada` |
 | Warehouses | Two: `nav-service` (app + config) and `base-image` (Packer output) |
 | Config | Rendered by Kargo with `helm-template`; Ansible copies verbatim, no templating on host |
 
@@ -123,7 +123,7 @@ Prospect pains this answers:
   setup provides terraform, packer, ansible, oras.
 - ServiceAccount + Role for Terraform state Secrets/Leases in the runner
   namespace.
-- Akuity Kargo agent (shard `homelab`) registered to the akpdemoapps Kargo
+- Akuity Kargo agent (shard `team-ada`) registered to the akpdemoapps Kargo
   instance.
 
 ### VMs
@@ -156,7 +156,7 @@ Every Stage requests Freight from both origins.
 | uat | sit | manual | `git-open-pr` + `git-wait-for-pr` | same |
 | prod | uat | manual | `snow-create` CR → `snow-wait-for-condition` (Implement) → PR + wait → deploy → `snow-update` close | same, both VMs |
 
-All Stages set `shard: homelab`. Verification runs as AnalysisTemplate jobs on
+All Stages set `shard: team-ada`. Verification runs as AnalysisTemplate jobs on
 the homelab agent's cluster, which can reach the VMs directly. The job script
 (curl + jq) queries the Proxmox API with a read-only token for VMs tagged
 `stage-<stage>`, reads each VM's guest-agent IPv4, then checks `/healthz`
