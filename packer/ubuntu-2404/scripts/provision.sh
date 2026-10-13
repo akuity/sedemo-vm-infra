@@ -15,12 +15,7 @@ apt-get "${APT_OPTS[@]}" full-upgrade
 apt-get "${APT_OPTS[@]}" install curl jq ca-certificates qemu-guest-agent
 systemctl enable qemu-guest-agent
 
-# Service account and config directory for nav-service.
-if ! id nav >/dev/null 2>&1; then
-  useradd --system --no-create-home --shell /usr/sbin/nologin nav
-fi
-install -d -o root -g nav -m 0750 /etc/nav-service
-
+# The app's service user and directories are created by Ansible at deploy time.
 printf '%s\n' "${BUILD_TIMESTAMP}" > /etc/vm-demo-base
 chmod 0644 /etc/vm-demo-base
 

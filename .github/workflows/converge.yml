@@ -30,6 +30,8 @@ env:
   PROXMOX_URL: https://pve01.annarchy.net:8006
   PROXMOX_USER: vm-demo@pve
   YQ_VERSION: v4.54.1
+  CRANE_VERSION: v0.22.1
+  CRANE_SHA256: 0ab7a1d6932a213aed964ce97666c3077fe691c8606413674a8b3e0b9ec4cda0
   ANSIBLE_CORE_VERSION: "2.21.4"
 
 jobs:
@@ -68,13 +70,13 @@ jobs:
           terraform_version: "1.16.4"
           terraform_wrapper: false
 
-      - uses: oras-project/setup-oras@v2.0.2
-        with:
-          version: "1.3.1"
-
-      - name: Install yq and Ansible
+      - name: Install crane, yq and Ansible
         run: |
           mkdir -p "$RUNNER_TEMP/bin"
+          curl -fsSL -o "$RUNNER_TEMP/crane.tar.gz" \
+            "https://github.com/google/go-containerregistry/releases/download/${CRANE_VERSION}/go-containerregistry_Linux_x86_64.tar.gz"
+          echo "${CRANE_SHA256}  $RUNNER_TEMP/crane.tar.gz" | sha256sum -c -
+          tar -xzf "$RUNNER_TEMP/crane.tar.gz" -C "$RUNNER_TEMP/bin" crane
           curl -fsSL -o "$RUNNER_TEMP/bin/yq" \
             "https://github.com/mikefarah/yq/releases/download/${YQ_VERSION}/yq_linux_amd64"
           chmod +x "$RUNNER_TEMP/bin/yq"
@@ -96,7 +98,7 @@ jobs:
           install -m 0600 /dev/null "$RUNNER_TEMP/deploy_key"
           printf '%s\n' "$ANSIBLE_SSH_KEY" > "$RUNNER_TEMP/deploy_key"
           if [ -n "$GHCR_READ_TOKEN" ]; then
-            printf '%s' "$GHCR_READ_TOKEN" | oras login ghcr.io -u token --password-stdin
+            printf '%s' "$GHCR_READ_TOKEN" | crane auth login ghcr.io -u token --password-stdin
           fi
 
       - name: Converge

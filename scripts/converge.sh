@@ -6,10 +6,13 @@
 #   scripts/converge.sh <stage> <platform_dir>
 #   scripts/converge.sh --list-vms <stage>
 #
-# <platform_dir> is a checkout of rendered/vm-demo/<stage> with config.yaml
+# <platform_dir> is a checkout of rendered/vm-demo/<stage> with rollouts-demo.env
 # and deploy.yaml (app_version, artifact, base_vmid, vm_count, ...) at its root.
+# The app image (FROM scratch: /rollouts-demo plus web assets) is unpacked with
+# `crane export` into ansible/artifact and copied to the VMs by deploy.yml.
 #
 # Environment:
+#   crane, yq, jq, terraform, ansible on PATH (registry auth via crane auth login)
 #   PROXMOX_VE_ENDPOINT, PROXMOX_VE_API_TOKEN   Terraform provider
 #   PROXMOX_URL, PROXMOX_USER, PROXMOX_TOKEN_ID, PROXMOX_TOKEN_SECRET   Ansible inventory
 #   TF_VAR_ssh_public_key                      deploy public key
@@ -53,9 +56,10 @@ root="$(cd "$(dirname "$0")/.." && pwd)"
 tf_dir="${root}/terraform/stage-vms"
 ansible_dir="${root}/ansible"
 deploy_yaml="${platform_dir}/deploy.yaml"
-config_file="${platform_dir}/config.yaml"
+env_file="${platform_dir}/rollouts-demo.env"
+artifact_dir="${ansible_dir}/artifact"
 
-for f in "$deploy_yaml" "$config_file"; do
+for f in "$deploy_yaml" "$env_file"; do
   [ -f "$f" ] || { echo "missing ${f}" >&2; exit 1; }
 done
 
@@ -100,6 +104,17 @@ summary() {
   } >>"$out"
 }
 trap summary EXIT
+
+# --- unpack the app image (before touching any VM) ---------------------------
+results+=("image=extracting ${artifact}")
+rm -rf "$artifact_dir"
+mkdir -p "$artifact_dir"
+crane export "$artifact" - | tar -x -C "$artifact_dir"
+if [ ! -f "${artifact_dir}/rollouts-demo" ]; then
+  echo "${artifact} has no /rollouts-demo" >&2
+  exit 1
+fi
+results[0]="image=ok (${artifact})"
 
 # --- terraform ---------------------------------------------------------------
 backend_args=("-backend-config=secret_suffix=vm-demo-${stage}")
@@ -154,9 +169,9 @@ wait_for_inventory_ip() {
 
 extra_vars="$(jq -cn \
   --arg stage "$stage" --arg artifact "$artifact" --arg app_version "$app_version" \
-  --arg config_file "$config_file" --argjson expected_count "$vm_count" \
+  --arg env_file "$env_file" --arg artifact_dir "$artifact_dir" --argjson expected_count "$vm_count" \
   --argjson healthz_gate "$healthz_gate" \
-  '{stage: $stage, artifact: $artifact, app_version: $app_version, config_file: $config_file,
+  '{stage: $stage, artifact: $artifact, app_version: $app_version, env_file: $env_file, artifact_dir: $artifact_dir,
     expected_count: $expected_count, healthz_gate: $healthz_gate}')"
 
 for name in "${vms[@]}"; do

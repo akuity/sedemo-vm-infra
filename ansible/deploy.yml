@@ -1,26 +1,30 @@
 ---
-# Deploy nav-service to one stage's VMs.
+# Deploy rollouts-demo (the rollouts-app image, run natively) to one stage's VMs.
+#
+# converge.sh unpacks the image (FROM scratch: /rollouts-demo plus web assets)
+# with `crane export` into artifact_dir before running this playbook.
 #
 # Extra vars:
 #   stage           dev | qa | sit | uat | prod
-#   artifact        OCI reference, e.g. ghcr.io/akuity/sedemo-monorepo-vm-app:1.2.3
-#   app_version     version /version must report after the restart
-#   config_file     path to the rendered config.yaml (copied verbatim)
+#   artifact        image reference, e.g. ghcr.io/akuity/sedemo-monorepo-rollouts-app:50-blue (for messages)
+#   app_version     image tag; GET /env must report it as .semver after the restart
+#   env_file        path to the rendered rollouts-demo.env (copied verbatim)
 #   expected_count  number of VMs the stage must have
-#   healthz_gate    true only for prod: also require /healthz 200, so a bad
-#                   config halts the rolling deploy after the first VM
+#   artifact_dir    unpacked image (default: <playbook_dir>/artifact)
+#   healthz_gate    true only for prod: also require 10 consecutive GET /color 200,
+#                   so a bad config halts the rolling deploy after the first VM
 #
 # When limiting to one VM, keep localhost in the limit: --limit 'vm-dev,localhost'.
 # The count check always uses the whole stage group, not the limited hosts.
 
-- name: Fetch artifact and check the stage inventory
+- name: Check the unpacked image and the stage inventory
   hosts: localhost
   connection: local
   gather_facts: false
   vars:
-    artifact_dir: "{{ playbook_dir }}/artifact"
     stage_group: "tag_stage_{{ stage }}"
     stage_hosts: "{{ groups[stage_group] | default([]) }}"
+    image_dir: "{{ artifact_dir | default(playbook_dir ~ '/artifact') }}"
   tasks:
     - name: Validate extra vars
       ansible.builtin.assert:
@@ -28,9 +32,9 @@
           - stage in ['dev', 'qa', 'sit', 'uat', 'prod']
           - artifact | default('') | length > 0
           - app_version | default('') | string | length > 0
-          - config_file is defined and config_file is file
+          - env_file is defined and env_file is file
           - expected_count | default(0) | int > 0
-        fail_msg: "stage, artifact, app_version, config_file (existing file) and expected_count are required"
+        fail_msg: "stage, artifact, app_version, env_file (existing file) and expected_count are required"
         quiet: true
 
     - name: Assert the stage has the expected number of VMs
@@ -50,127 +54,120 @@
         quiet: true
       loop: "{{ stage_hosts }}"
 
-    - name: Reset artifact directory
-      ansible.builtin.file:
-        path: "{{ artifact_dir }}"
-        state: "{{ item }}"
-        mode: "0755"
-      loop: [absent, directory]
+    - name: Check the rollouts-demo binary was unpacked
+      ansible.builtin.stat:
+        path: "{{ image_dir }}/rollouts-demo"
+      register: binary
 
-    - name: Pull artifact
-      ansible.builtin.command:
-        cmd: oras pull {{ artifact | quote }} --output {{ artifact_dir | quote }}
-      changed_when: true
-
-    - name: Find the release tarball
-      ansible.builtin.find:
-        paths: "{{ artifact_dir }}"
-        patterns: "nav-service_*_linux_amd64.tar.gz"
-      register: tarball
-
-    - name: Assert exactly one release tarball
+    - name: Assert the rollouts-demo binary is present
       ansible.builtin.assert:
         that:
-          - tarball.matched == 1
-        fail_msg: "Expected one nav-service_*_linux_amd64.tar.gz in {{ artifact }}, found {{ tarball.matched }}"
+          - binary.stat.exists
+        fail_msg: "{{ image_dir }} has no rollouts-demo binary; was {{ artifact }} unpacked?"
         quiet: true
 
-    - name: Create extract directory
-      ansible.builtin.file:
-        path: "{{ artifact_dir }}/extract"
-        state: directory
-        mode: "0755"
+    - name: Find web assets
+      ansible.builtin.find:
+        paths: "{{ image_dir }}"
+        patterns: ["*.html", "*.js", "*.png", "*.ico", "*.css"]
+      register: assets
 
-    - name: Unpack release tarball
-      ansible.builtin.unarchive:
-        src: "{{ tarball.files[0].path }}"
-        dest: "{{ artifact_dir }}/extract"
-        remote_src: true
+    - name: Assert the image has web assets
+      ansible.builtin.assert:
+        that:
+          - assets.files | selectattr('path', 'search', '/index\.html$') | list | length == 1
+        fail_msg: "{{ image_dir }} has no index.html"
+        quiet: true
 
-    - name: Check binary and unit are present
-      ansible.builtin.stat:
-        path: "{{ artifact_dir }}/extract/{{ item }}"
-      register: unpacked
-      loop: [nav-service, nav-service.service]
-      failed_when: not unpacked.stat.exists
-
-- name: Deploy nav-service
+- name: Deploy rollouts-demo
   hosts: "tag_stage_{{ stage | default('none') }}"
   serial: 1
   any_errors_fatal: true
   become: true
   gather_facts: false
   vars:
-    src_dir: "{{ playbook_dir }}/artifact/extract"
+    image_dir: "{{ artifact_dir | default(playbook_dir ~ '/artifact') }}"
+    asset_files: "{{ hostvars['localhost']['assets']['files'] | map(attribute='path') | list }}"
     healthz_gate: false
   tasks:
     - name: Wait for SSH (new VMs may still be booting)
       ansible.builtin.wait_for_connection:
-        timeout: 300
+        timeout: "{{ wait_for_connection_timeout | default(300) }}"
 
-    # The base image provides these; keep a VM built from an older image working.
     - name: Ensure service user
       ansible.builtin.user:
-        name: nav
+        name: rollouts
         system: true
         create_home: false
+        home: /nonexistent
         shell: /usr/sbin/nologin
 
-    - name: Ensure config directory
+    - name: Ensure directories
       ansible.builtin.file:
-        path: /etc/nav-service
+        path: "{{ item.path }}"
         state: directory
         owner: root
-        group: nav
-        mode: "0750"
+        group: "{{ item.group }}"
+        mode: "{{ item.mode }}"
+      loop:
+        - { path: /opt/rollouts-demo, group: root, mode: "0755" }
+        - { path: /etc/rollouts-demo, group: rollouts, mode: "0750" }
 
     - name: Install binary
       ansible.builtin.copy:
-        src: "{{ src_dir }}/nav-service"
-        dest: /usr/local/bin/nav-service
+        src: "{{ image_dir }}/rollouts-demo"
+        dest: /opt/rollouts-demo/rollouts-demo
         owner: root
         group: root
         mode: "0755"
 
+    - name: Install web assets
+      ansible.builtin.copy:
+        src: "{{ item }}"
+        dest: /opt/rollouts-demo/
+        owner: root
+        group: root
+        mode: "0644"
+      loop: "{{ asset_files }}"
+
     - name: Install systemd unit
       ansible.builtin.copy:
-        src: "{{ src_dir }}/nav-service.service"
-        dest: /etc/systemd/system/nav-service.service
+        src: files/rollouts-demo.service
+        dest: /etc/systemd/system/rollouts-demo.service
         owner: root
         group: root
         mode: "0644"
 
-    - name: Install rendered config
+    - name: Install rendered env file
       ansible.builtin.copy:
-        src: "{{ config_file }}"
-        dest: /etc/nav-service/config.yaml
+        src: "{{ env_file }}"
+        dest: /etc/rollouts-demo/rollouts-demo.env
         owner: root
-        group: nav
+        group: rollouts
         mode: "0640"
 
     # Always restart: re-promoting identical Freight must still converge.
-    - name: Restart nav-service
+    - name: Restart rollouts-demo
       ansible.builtin.systemd_service:
-        name: nav-service
+        name: rollouts-demo
         daemon_reload: true
         enabled: true
         state: restarted
 
-    - name: Wait for /version to report {{ app_version }}
+    - name: Wait for /env to report semver {{ app_version }}
       ansible.builtin.uri:
-        url: http://127.0.0.1:8080/version
+        url: http://127.0.0.1:8080/env
         return_content: true
-      register: version
-      until: version.json is defined and (version.json.version | string) == (app_version | string)
+      register: env
+      until: env.json is defined and (env.json.semver | default('') | string) == (app_version | string)
       retries: 20
       delay: 3
 
-    - name: Require /healthz 200 before the next VM
+    - name: Require 10 consecutive GET /color 200 before the next VM
       ansible.builtin.uri:
-        url: http://127.0.0.1:8080/healthz
+        url: http://127.0.0.1:8080/color
         status_code: 200
-      register: healthz
-      until: healthz.status == 200
-      retries: 10
-      delay: 3
+      loop: "{{ range(10) | list }}"
+      loop_control:
+        label: "/color #{{ item + 1 }}"
       when: healthz_gate | bool
