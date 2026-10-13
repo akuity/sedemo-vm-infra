@@ -1,0 +1,123 @@
+name: bake-base-image
+
+on:
+  workflow_dispatch: {}
+
+permissions:
+  contents: write
+
+concurrency:
+  group: bake
+  cancel-in-progress: false
+
+env:
+  PROXMOX_URL: https://pve01.annarchy.net:8006
+  PROXMOX_NODE: pve01
+  PROXMOX_USER: vm-demo@pve
+
+jobs:
+  bake:
+    runs-on: homelab-vm-demo
+    timeout-minutes: 60
+    env:
+      PROXMOX_TOKEN_ID: ${{ secrets.PROXMOX_TOKEN_ID }}
+      PROXMOX_TOKEN_SECRET: ${{ secrets.PROXMOX_TOKEN_SECRET }}
+    steps:
+      - uses: actions/checkout@v7.0.1
+
+      - name: Compute template VMID and name
+        run: |
+          vmid=$((9101 + GITHUB_RUN_NUMBER % 90))
+          stamp="$(date -u +%Y%m%d%H%M)"
+          {
+            echo "VMID=${vmid}"
+            echo "TEMPLATE_NAME=ubuntu-2404-base-${stamp}"
+            echo "BUILT=$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+          } >> "$GITHUB_ENV"
+
+      - name: Delete previous template at this VMID
+        run: |
+          set -euo pipefail
+          auth="Authorization: PVEAPIToken=${PROXMOX_USER}!${PROXMOX_TOKEN_ID}=${PROXMOX_TOKEN_SECRET}"
+          api="${PROXMOX_URL}/api2/json/nodes/${PROXMOX_NODE}/qemu/${VMID}"
+          code="$(curl -sk -o "$RUNNER_TEMP/vm.json" -w '%{http_code}' -H "$auth" "${api}/config")"
+          if [ "$code" != "200" ]; then
+            echo "VMID ${VMID} is free (HTTP ${code})."
+            exit 0
+          fi
+          tags="$(jq -r '.data.tags // ""' "$RUNNER_TEMP/vm.json")"
+          template="$(jq -r '.data.template // 0' "$RUNNER_TEMP/vm.json")"
+          # Only ever delete our own baked templates.
+          case ";${tags};" in
+            *";base;"*) ;;
+            *) echo "::error::VMID ${VMID} exists but is not a vm-demo base template (tags: ${tags})"; exit 1 ;;
+          esac
+          case ";${tags};" in
+            *";vm-demo;"*) ;;
+            *) echo "::error::VMID ${VMID} exists but is not tagged vm-demo (tags: ${tags})"; exit 1 ;;
+          esac
+          if [ "$template" != "1" ]; then
+            echo "::error::VMID ${VMID} is not a template"; exit 1
+          fi
+          upid="$(curl -skf -X DELETE -H "$auth" "${api}?purge=1&destroy-unreferenced-disks=1" | jq -r .data)"
+          echo "Deleting VMID ${VMID}: ${upid}"
+          for _ in $(seq 1 60); do
+            status="$(curl -skf -H "$auth" \
+              "${PROXMOX_URL}/api2/json/nodes/${PROXMOX_NODE}/tasks/${upid}/status" | jq -r .data.status)"
+            [ "$status" = "stopped" ] && break
+            sleep 5
+          done
+          if curl -sk -o /dev/null -w '%{http_code}' -H "$auth" "${api}/config" | grep -q '^200$'; then
+            echo "::error::VMID ${VMID} still exists after delete"; exit 1
+          fi
+
+      - name: Write deploy key
+        env:
+          ANSIBLE_SSH_KEY: ${{ secrets.ANSIBLE_SSH_KEY }}
+        run: |
+          install -m 0600 /dev/null "$RUNNER_TEMP/deploy_key"
+          printf '%s\n' "$ANSIBLE_SSH_KEY" > "$RUNNER_TEMP/deploy_key"
+
+      - uses: hashicorp/setup-packer@v3.4.0
+        with:
+          version: "1.16.1"
+
+      - name: Packer build
+        working-directory: packer/ubuntu-2404
+        run: |
+          packer init .
+          packer build -color=false \
+            -var "vm_id=${VMID}" \
+            -var "template_name=${TEMPLATE_NAME}" \
+            -var "ssh_private_key_file=${RUNNER_TEMP}/deploy_key" \
+            -var "build_timestamp=${BUILT}" \
+            .
+
+      - name: Record template in images/base.json
+        run: |
+          jq -n \
+            --arg template "$TEMPLATE_NAME" \
+            --argjson vmid "$VMID" \
+            --arg built "$BUILT" \
+            --arg packer_commit "$GITHUB_SHA" \
+            '{template: $template, vmid: $vmid, built: $built, packer_commit: $packer_commit}' \
+            > images/base.json
+          cat images/base.json
+
+      - name: Commit and push
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add images/base.json
+          git commit -m "chore(images): bake ${TEMPLATE_NAME}"
+          git pull --rebase origin main
+          git push origin HEAD:main
+
+      - name: Summary
+        if: always()
+        run: |
+          {
+            echo "### Base image bake"
+            echo "- template: \`${TEMPLATE_NAME:-n/a}\`"
+            echo "- vmid: \`${VMID:-n/a}\`"
+          } >> "$GITHUB_STEP_SUMMARY"
