@@ -81,15 +81,17 @@ ensure_new_release_is_newest() {
   log "Warehouse produced $NEW_TAG Freight $newest"
 }
 
+# Wait until a stage holds exactly Freight $2 (not just the same image tag:
+# rehearsal Freight can share a tag with a different chart commit) and it is
+# verified.
 wait_auto() {
-  local stage="$1" want_tag="$2" deadline=$((SECONDS + PROMOTION_TIMEOUT)) cur
+  local stage="$1" want="$2" deadline=$((SECONDS + PROMOTION_TIMEOUT))
   while :; do
-    cur="$(stage_freight "$stage" app)"
-    if [[ -n "$cur" && "$(freight_tag "$cur")" == "$want_tag" && "$(stage_verification "$stage")" == Successful ]]; then
-      log "$stage: on $want_tag and verified (auto-promotion)"
+    if [[ "$(stage_freight "$stage" app)" == "$want" && "$(stage_verification "$stage")" == Successful ]]; then
+      log "$stage: on $(freight_tag "$want") ($want) and verified (auto-promotion)"
       return 0
     fi
-    (( SECONDS < deadline )) || die "$stage did not auto-promote to $want_tag"
+    (( SECONDS < deadline )) || die "$stage did not auto-promote to $want"
     sleep 20
   done
 }
@@ -124,7 +126,7 @@ main() {
   else
     promote_and_wait dev "$blue" || die "dev did not reach $NEW_TAG"
   fi
-  wait_auto qa "$NEW_TAG"
+  wait_auto qa "$blue"
 
   echo
   print_status
