@@ -81,9 +81,14 @@ jobs:
             "https://github.com/mikefarah/yq/releases/download/${YQ_VERSION}/yq_linux_amd64"
           chmod +x "$RUNNER_TEMP/bin/yq"
           echo "$RUNNER_TEMP/bin" >> "$GITHUB_PATH"
+          # The stock runner image has python3 but no pip/venv or ssh client, and
+          # Ubuntu 24.04 blocks --user pip installs (PEP 668): use a venv.
           if ! command -v ansible-playbook >/dev/null; then
-            python3 -m pip install --user "ansible-core==${ANSIBLE_CORE_VERSION}" requests
-            echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+            sudo apt-get update -qq
+            sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -qq python3-venv openssh-client >/dev/null
+            python3 -m venv "$RUNNER_TEMP/ansible-venv"
+            "$RUNNER_TEMP/ansible-venv/bin/pip" install -q "ansible-core==${ANSIBLE_CORE_VERSION}" requests
+            echo "$RUNNER_TEMP/ansible-venv/bin" >> "$GITHUB_PATH"
           fi
 
       - name: Install Ansible collections
