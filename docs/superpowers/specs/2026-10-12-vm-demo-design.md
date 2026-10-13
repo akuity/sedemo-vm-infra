@@ -1,7 +1,7 @@
 # VM Deployment Demo: Kargo Promotions to Proxmox VMs
 
 - **Date:** 2026-10-12
-- **Status:** Draft, pending review
+- **Status:** Approved 2026-10-12
 - **Audience:** Prospect technical demo (2026-10-13). No customer or person
   names appear in this repo or in the public repos (`sedemo-platform`,
   `sedemo-monorepo`).
@@ -196,7 +196,7 @@ the expected VM count is not found.
 | # | Assumption | Spike | Fallback |
 |---|---|---|---|
 | S1 | Kargo `image` subscription accepts an `oras`-pushed tarball artifact | push `0.0.1`, throwaway Warehouse, confirm Freight | `FROM scratch` image wrapping the binary; Ansible extracts with `crane export` |
-| S2 | Self-hosted agent can be added to the akpdemoapps Kargo instance and Stages pinned to it | list/create agent via Akuity MCP | hosted shard; health checks move into `converge.yml` |
+| S2 | Self-hosted agent can be added to the akpdemoapps Kargo instance and Stages pinned to it | list/create agent via Akuity MCP | **None. Hard requirement.** Kargo verification must reach the VMs for `autoRollback` to fire; a hosted-shard fallback would silently lose the dev auto-rollback scenario. If S2 fails, stop and re-plan with the presenter. |
 | S3 | ServiceNow PDI awake, `kargo-step-snow` valid | `snow-create` from a scratch stage | prod with PR gate only; ServiceNow shown via `demo-snow` |
 | S4 | Kargo gha steps can dispatch in a private repo | dispatch a no-op workflow | broader-scope token |
 
@@ -225,7 +225,8 @@ backend RBAC; pod network reachability to Proxmox API and VM IPs;
 1. qa smoke-test job.
 2. Rolling prod replacement (one prod VM).
 3. Live base-image rollout through all stages (pre-roll, show dev live).
-4. Homelab Kargo agent (S2 fallback).
+
+The homelab Kargo agent is not cuttable (see S2).
 
 Never cut: rendered-config PR, prod ServiceNow CR, dev auto-rollback, prod
 rollback.
