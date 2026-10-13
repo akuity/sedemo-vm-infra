@@ -1,0 +1,176 @@
+---
+# Deploy nav-service to one stage's VMs.
+#
+# Extra vars:
+#   stage           dev | qa | sit | uat | prod
+#   artifact        OCI reference, e.g. ghcr.io/akuity/sedemo-monorepo-nav-service:1.2.3
+#   app_version     version /version must report after the restart
+#   config_file     path to the rendered config.yaml (copied verbatim)
+#   expected_count  number of VMs the stage must have
+#   healthz_gate    true only for prod: also require /healthz 200, so a bad
+#                   config halts the rolling deploy after the first VM
+#
+# When limiting to one VM, keep localhost in the limit: --limit 'vm-dev,localhost'.
+# The count check always uses the whole stage group, not the limited hosts.
+
+- name: Fetch artifact and check the stage inventory
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  vars:
+    artifact_dir: "{{ playbook_dir }}/artifact"
+    stage_group: "tag_stage_{{ stage }}"
+    stage_hosts: "{{ groups[stage_group] | default([]) }}"
+  tasks:
+    - name: Validate extra vars
+      ansible.builtin.assert:
+        that:
+          - stage in ['dev', 'qa', 'sit', 'uat', 'prod']
+          - artifact | default('') | length > 0
+          - app_version | default('') | string | length > 0
+          - config_file is defined and config_file is file
+          - expected_count | default(0) | int > 0
+        fail_msg: "stage, artifact, app_version, config_file (existing file) and expected_count are required"
+        quiet: true
+
+    - name: Assert the stage has the expected number of VMs
+      ansible.builtin.assert:
+        that:
+          - stage_hosts | length == expected_count | int
+        fail_msg: >-
+          Expected {{ expected_count }} VM(s) tagged stage-{{ stage }},
+          found {{ stage_hosts | length }}: {{ stage_hosts | join(', ') or 'none' }}
+        quiet: true
+
+    - name: Assert every VM has a guest-agent IPv4 address
+      ansible.builtin.assert:
+        that:
+          - hostvars[item]['ansible_host'] | default('') is match('^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$')
+        fail_msg: "{{ item }} has no guest-agent IPv4 yet (ansible_host={{ hostvars[item]['ansible_host'] | default('unset') }})"
+        quiet: true
+      loop: "{{ stage_hosts }}"
+
+    - name: Reset artifact directory
+      ansible.builtin.file:
+        path: "{{ artifact_dir }}"
+        state: "{{ item }}"
+        mode: "0755"
+      loop: [absent, directory]
+
+    - name: Pull artifact
+      ansible.builtin.command:
+        cmd: oras pull {{ artifact | quote }} --output {{ artifact_dir | quote }}
+      changed_when: true
+
+    - name: Find the release tarball
+      ansible.builtin.find:
+        paths: "{{ artifact_dir }}"
+        patterns: "nav-service_*_linux_amd64.tar.gz"
+      register: tarball
+
+    - name: Assert exactly one release tarball
+      ansible.builtin.assert:
+        that:
+          - tarball.matched == 1
+        fail_msg: "Expected one nav-service_*_linux_amd64.tar.gz in {{ artifact }}, found {{ tarball.matched }}"
+        quiet: true
+
+    - name: Create extract directory
+      ansible.builtin.file:
+        path: "{{ artifact_dir }}/extract"
+        state: directory
+        mode: "0755"
+
+    - name: Unpack release tarball
+      ansible.builtin.unarchive:
+        src: "{{ tarball.files[0].path }}"
+        dest: "{{ artifact_dir }}/extract"
+        remote_src: true
+
+    - name: Check binary and unit are present
+      ansible.builtin.stat:
+        path: "{{ artifact_dir }}/extract/{{ item }}"
+      register: unpacked
+      loop: [nav-service, nav-service.service]
+      failed_when: not unpacked.stat.exists
+
+- name: Deploy nav-service
+  hosts: "tag_stage_{{ stage | default('none') }}"
+  serial: 1
+  any_errors_fatal: true
+  become: true
+  gather_facts: false
+  vars:
+    src_dir: "{{ playbook_dir }}/artifact/extract"
+    healthz_gate: false
+  tasks:
+    - name: Wait for SSH (new VMs may still be booting)
+      ansible.builtin.wait_for_connection:
+        timeout: 300
+
+    # The base image provides these; keep a VM built from an older image working.
+    - name: Ensure service user
+      ansible.builtin.user:
+        name: nav
+        system: true
+        create_home: false
+        shell: /usr/sbin/nologin
+
+    - name: Ensure config directory
+      ansible.builtin.file:
+        path: /etc/nav-service
+        state: directory
+        owner: root
+        group: nav
+        mode: "0750"
+
+    - name: Install binary
+      ansible.builtin.copy:
+        src: "{{ src_dir }}/nav-service"
+        dest: /usr/local/bin/nav-service
+        owner: root
+        group: root
+        mode: "0755"
+
+    - name: Install systemd unit
+      ansible.builtin.copy:
+        src: "{{ src_dir }}/nav-service.service"
+        dest: /etc/systemd/system/nav-service.service
+        owner: root
+        group: root
+        mode: "0644"
+
+    - name: Install rendered config
+      ansible.builtin.copy:
+        src: "{{ config_file }}"
+        dest: /etc/nav-service/config.yaml
+        owner: root
+        group: nav
+        mode: "0640"
+
+    # Always restart: re-promoting identical Freight must still converge.
+    - name: Restart nav-service
+      ansible.builtin.systemd_service:
+        name: nav-service
+        daemon_reload: true
+        enabled: true
+        state: restarted
+
+    - name: Wait for /version to report {{ app_version }}
+      ansible.builtin.uri:
+        url: http://127.0.0.1:8080/version
+        return_content: true
+      register: version
+      until: version.json is defined and (version.json.version | string) == (app_version | string)
+      retries: 20
+      delay: 3
+
+    - name: Require /healthz 200 before the next VM
+      ansible.builtin.uri:
+        url: http://127.0.0.1:8080/healthz
+        status_code: 200
+      register: healthz
+      until: healthz.status == 200
+      retries: 10
+      delay: 3
+      when: healthz_gate | bool
