@@ -87,13 +87,19 @@ ensure_new_release_is_newest() {
 # rehearsal Freight can share a tag with a different chart commit) and it is
 # verified.
 wait_auto() {
-  local stage="$1" want="$2" deadline=$((SECONDS + PROMOTION_TIMEOUT))
+  local stage="$1" want="$2" deadline=$((SECONDS + ${AUTO_WAIT:-150}))
   while :; do
     if [[ "$(stage_freight "$stage" app)" == "$want" && "$(stage_verification "$stage")" == Successful ]]; then
       log "$stage: on $(freight_tag "$want") ($want) and verified (auto-promotion)"
       return 0
     fi
-    (( SECONDS < deadline )) || die "$stage did not auto-promote to $want"
+    if (( SECONDS >= deadline )); then
+      # Kargo does not auto-promote Freight a stage already held earlier
+      # (e.g. after someone moved the stage back by hand), so promote it.
+      log "$stage: no auto-promotion to $want; promoting it"
+      promote_and_wait "$stage" "$want" || die "$stage did not reach $want"
+      return 0
+    fi
     sleep 20
   done
 }
