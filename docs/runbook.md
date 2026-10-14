@@ -15,7 +15,7 @@ Actions. Target length: 6–8 minutes. All timings below are from the
 | Converge runs | https://github.com/akuity/sedemo-vm-infra/actions/workflows/converge.yml |
 | Prod change tickets | Jira project CHANGE, https://eddiewebb.atlassian.net/browse/CHANGE |
 | Config chart (shared defaults) | `akuity/sedemo-monorepo` `vm-app/config-chart/values.yaml` |
-| App on a VM | `http://<vm-ip>:8080/` (IPs: last `vm-health` verification log, or Proxmox) |
+| App on each VM | `scripts/demo/links.sh` prints every stage's link, what it runs, and Kargo's view (DHCP: re-run after a base-image promotion replaces VMs) |
 
 ## Starting state (`scripts/demo/reset-demo.sh`)
 
